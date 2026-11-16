@@ -858,6 +858,11 @@
             isVerifyingManually = true;
             verifyLetterBtn.disabled = true;
             try {
+                for (let seconds = 3; seconds > 0; seconds--) {
+                    handStatusElement.textContent = `Retira la mano. Verificando en ${seconds}...`;
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
                 handStatusElement.textContent = '✋ Comprobando que no haya manos...';
                 if (await handDetectedRecently()) {
                     handStatusElement.textContent = '✋ Retira la mano o los dedos antes de verificar.';
