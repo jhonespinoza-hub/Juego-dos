@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba: detección de manos y letras</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: Arial, sans-serif;
+            color: #172033;
+            background: #f1f5f9;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 24px;
+        }
+
+        main {
+            width: min(100%, 760px);
+            margin: 0 auto;
+            padding: 24px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 8px 28px #1720331a;
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .camera {
+            position: relative;
+            overflow: hidden;
+            width: min(100%, 560px);
+            margin: 20px auto;
+            background: #111827;
+            border-radius: 12px;
+        }
+
+        video {
+            display: block;
+            width: 100%;
+            min-height: 240px;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        .guide-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: min(68%, 280px);
+            aspect-ratio: 1;
+            border: 3px dashed #86efac;
+            border-radius: 12px;
+            box-shadow: 0 0 0 999px #0f172a30;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        .guide-label {
+            position: absolute;
+            right: 12px;
+            bottom: 12px;
+            left: 12px;
+            margin: 0;
+            color: #fff;
+            font-size: 0.95rem;
+            font-weight: 700;
+            text-align: center;
+            text-shadow: 0 1px 4px #000;
+            pointer-events: none;
+        }
+
+        #status {
+            min-height: 56px;
+            padding: 16px;
+            border-radius: 10px;
+            background: #e2e8f0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        #result {
+            min-height: 32px;
+            text-align: center;
+        }
+
+        button {
+            display: block;
+            margin: 16px auto;
+            padding: 12px 24px;
+            border: 0;
+            border-radius: 8px;
+            background: #2563eb;
+            color: #fff;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            cursor: wait;
+            opacity: 0.65;
+        }
+
+        .note {
+            color: #475569;
+            line-height: 1.5;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 16px;
+            color: #1d4ed8;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <a class="back-link" href="index.html">← Volver al menú principal</a>
+        <h1>Prueba de detección de manos y letras</h1>
+        <p class="note">
+            Si detecta una mano o un dedo,
+            pausa la clasificación y muestra una advertencia. Solo intenta
+            reconocer la letra cuando no detecta ninguna mano.
+        </p>
+
+        <button id="toggleButton" type="button">Iniciar cámara</button>
+        <div class="camera">
+            <video id="camera" autoplay muted playsinline></video>
+            <div class="guide-box" aria-hidden="true"></div>
+            <p class="guide-label" aria-hidden="true">Centra la tarjeta dentro del recuadro</p>
+        </div>
+        <div id="status" role="status" aria-live="polite">Pulsa “Iniciar cámara” para probar.</div>
+        <p id="result" aria-live="polite"></p>
+
+        <p class="note">
+            Mantén la tarjeta completa dentro del recuadro. Para probar la
+            detección de manos, primero muestra una mano o un dedo como lo harías normalmente y
+            luego prueba sin manos. La cámara requiere HTTPS o una dirección
+            localhost.
+        </p>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script>
+        const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/cFXivK3uS/';
+        const MIN_LETTER_CONFIDENCE = 0.82;
+        const HAND_CLEAR_DELAY_MS = 1000;
+
+        const camera = document.getElementById('camera');
+        const statusElement = document.getElementById('status');
+        const resultElement = document.getElementById('result');
+        const toggleButton = document.getElementById('toggleButton');
+
+        let model = null;
+        let handDetector = null;
+        let stream = null;
+        let isRunning = false;
+        let latestHandDetected = null;
+        let lastHandDetectedAt = 0;
+
+        toggleButton.addEventListener('click', () => {
+            if (isRunning) {
+                stopTest();
+            } else {
+                startTest();
+            }
+        });
+
+        async function startTest() {
+            toggleButton.disabled = true;
+            statusElement.textContent = 'Cargando modelo y detector de manos...';
+            resultElement.textContent = '';
+
+            try {
+                if (!window.tmImage || !window.Hands) {
+                    throw new Error('No se pudieron cargar Teachable Machine o MediaPipe Hands. Revisa la conexión a internet.');
+                }
+
+                if (!model) {
+                    model = await tmImage.load(`${MODEL_URL}model.json`, `${MODEL_URL}metadata.json`);
+                    const classCount = model.getTotalClasses();
+                    if (classCount !== 28) {
+                        throw new Error(`El modelo devuelve ${classCount} clases; esta prueba espera 28.`);
+                    }
+                }
+
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('La cámara requiere HTTPS o localhost.');
+                }
+
+                handDetector = new Hands({
+                    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+                handDetector.setOptions({
+                    maxNumHands: 2,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.05,
+                    minTrackingConfidence: 0.05
+                });
+                handDetector.onResults(results => {
+                    latestHandDetected = Boolean(results.multiHandLandmarks?.length);
+                });
+
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                });
+                camera.srcObject = stream;
+                await camera.play();
+
+                isRunning = true;
+                toggleButton.textContent = 'Detener cámara';
+                toggleButton.disabled = false;
+                statusElement.textContent = 'Cámara lista. Analizando...';
+                processFrames();
+            } catch (error) {
+                console.error(error);
+                isRunning = false;
+                stopStream();
+                if (handDetector) {
+                    await handDetector.close();
+                    handDetector = null;
+                }
+                toggleButton.textContent = 'Iniciar cámara';
+                toggleButton.disabled = false;
+                statusElement.textContent = `No se pudo iniciar: ${error.message}`;
+            }
+        }
+
+        async function processFrames() {
+            try {
+                while (isRunning) {
+                    latestHandDetected = null;
+                    await handDetector.send({ image: camera });
+                    if (!isRunning) break;
+
+                    if (latestHandDetected === null) {
+                        throw new Error('El detector de manos no devolvió resultados.');
+                    }
+
+                    if (latestHandDetected) {
+                        lastHandDetectedAt = Date.now();
+                    }
+
+                    const handRecentlyDetected =
+                        latestHandDetected || Date.now() - lastHandDetectedAt < HAND_CLEAR_DELAY_MS;
+                    if (handRecentlyDetected) {
+                        statusElement.textContent = '✋ Retira todos los dedos y manos del encuadre';
+                        resultElement.textContent = 'Clasificación de letras pausada.';
+                    } else {
+                        statusElement.textContent = 'No se detectan manos. Buscando una letra...';
+                        await classifyFrame();
+                    }
+
+                    await delay(100);
+                }
+            } catch (error) {
+                console.error(error);
+                if (isRunning) {
+                    statusElement.textContent = `Error durante el análisis: ${error.message}`;
+                }
+            } finally {
+                isRunning = false;
+                stopStream();
+                if (handDetector) {
+                    await handDetector.close();
+                    handDetector = null;
+                }
+                toggleButton.textContent = 'Iniciar cámara';
+                toggleButton.disabled = false;
+            }
+        }
+
+        async function classifyFrame() {
+            const predictions = await model.predict(camera, true);
+            let bestPrediction = predictions[0];
+            for (let i = 1; i < predictions.length; i++) {
+                if (predictions[i].probability > bestPrediction.probability) {
+                    bestPrediction = predictions[i];
+                }
+            }
+
+            const label = bestPrediction.className.trim().toUpperCase().replace(/^LETRA\s+/, '');
+            const confidence = bestPrediction.probability;
+            if (label === 'NADA' || confidence < MIN_LETTER_CONFIDENCE) {
+                resultElement.textContent = 'No se reconoce una letra con suficiente confianza.';
+                return;
+            }
+
+            resultElement.textContent = `Letra detectada: ${label} (${Math.round(confidence * 100)}%)`;
+        }
+
+        function stopTest() {
+            isRunning = false;
+            stopStream();
+            statusElement.textContent = 'Deteniendo cámara...';
+            resultElement.textContent = '';
+            toggleButton.disabled = true;
+        }
+
+        function stopStream() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            camera.srcObject = null;
+        }
+
+        function delay(milliseconds) {
+            return new Promise(resolve => setTimeout(resolve, milliseconds));
+        }
+    </script>
+</body>
+</html>
