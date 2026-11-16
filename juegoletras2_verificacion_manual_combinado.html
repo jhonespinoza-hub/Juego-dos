@@ -249,31 +249,6 @@
             gap: 12px;
         }
 
-        .verify-button:disabled {
-            cursor: not-allowed;
-            opacity: 0.6;
-            transform: none;
-        }
-
-        #practiceMode {
-            padding: 20px 30px 30px;
-        }
-
-        #practiceMode iframe {
-            display: block;
-            width: 100%;
-            height: min(80vh, 900px);
-            min-height: 520px;
-            border: 1px solid var(--border);
-            border-radius: var(--border-radius);
-        }
-
-        .practice-mode-message {
-            margin-bottom: 12px;
-            color: var(--text-muted);
-            text-align: center;
-        }
-
         #webcam-container {
             width: 100%;
             height: 100%;
@@ -295,6 +270,34 @@
             pointer-events: none;
             animation: scanning 1.5s infinite ease-in-out;
             border-radius: var(--border-radius);
+        }
+
+        .letter-guide {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 68%;
+            aspect-ratio: 1;
+            border: 3px dashed #86efac;
+            border-radius: 12px;
+            box-shadow: 0 0 0 999px rgba(15, 23, 42, 0.2);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        .letter-guide-label {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            left: 12px;
+            z-index: 2;
+            margin: 0;
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 700;
+            text-align: center;
+            text-shadow: 0 1px 4px #000;
+            pointer-events: none;
         }
 
         .scanning-corner {
@@ -488,8 +491,6 @@
             .interactive-container { gap: 14px; }
             .card-preview, .camera-view { width: min(100%, 320px); height: auto; aspect-ratio: 1; }
             .card-preview .image-box { height: min(200px, 54vw); flex: 1; min-height: 0; }
-            #practiceMode { padding: 12px; }
-            #practiceMode iframe { height: 75vh; min-height: 420px; }
             .modal-overlay { padding: 12px; overflow-y: auto; }
             .modal-card { width: 100%; max-height: calc(100svh - 24px); overflow-y: auto; padding: 24px 18px; }
         }
@@ -510,7 +511,7 @@
 
             <div class="header-nav-buttons">
                 <a href="index.html" class="btn-home-header">🏠 Menú Principal</a>
-                <button id="btnTogglePracticeMode" class="btn-practice-header" type="button" disabled>✏️ Ejercicios prácticos</button>
+                <a href="ejercicios_practicos_letras_manos_combinado.html" class="btn-practice-header">✏️ Ejercicios ➔</a>
             </div>
 
             <div class="header-info">
@@ -525,11 +526,6 @@
                 <button id="resetBtn" class="btn-reset" title="Reiniciar juego">↺</button>
             </div>
         </header>
-
-        <section id="practiceMode" style="display: none;" aria-label="Ejercicios prácticos">
-            <p class="practice-mode-message">Completa palabras y verifica manualmente las letras con la cámara.</p>
-            <iframe id="practiceFrame" title="Juego de ejercicios prácticos" allow="camera; microphone"></iframe>
-        </section>
 
         <main>
             <div id="mediaContainer" class="media-container">
@@ -555,10 +551,9 @@
                                 <div class="scanning-corner bl"></div>
                                 <div class="scanning-corner br"></div>
                             </div>
+                            <div class="letter-guide" aria-hidden="true"></div>
+                            <p class="letter-guide-label" aria-hidden="true">Centra la tarjeta</p>
                         </div>
-                        <button id="btnVerifyLetter" class="btn-action verify-button" type="button" disabled>
-                            🔎 Verificar letra
-                        </button>
                     </div>
                 </div>
             </div>
@@ -649,6 +644,7 @@
         let lastHandDetectedAt = 0;
         let isProcessingMatch = false;
         let countdownTimer = null;
+        let retryTimer = null;
 
         // Elementos DOM
         const scoreValueElement = document.getElementById('scoreValue');
@@ -664,80 +660,12 @@
         const interactiveContainer = document.getElementById('interactiveContainer');
         const instructionBox = document.getElementById('instructionBox');
         const completionModal = document.getElementById('completionModal');
-        const verifyButton = document.getElementById('btnVerifyLetter');
-        const practiceModeElement = document.getElementById('practiceMode');
-        const practiceFrame = document.getElementById('practiceFrame');
-        const togglePracticeButton = document.getElementById('btnTogglePracticeMode');
-        const homeHeaderButton = document.querySelector('.btn-home-header');
-        const headerInfo = document.querySelector('.header-info');
-        const mainElement = document.querySelector('main');
-        const footerElement = document.querySelector('footer');
-        let isPracticeMode = false;
-        let wasScanActiveBeforePractice = false;
 
         // Botones de acción
         document.getElementById('btnGoToExercises').addEventListener('click', () => window.location.href = 'ejercicios_practicos_letras_manos_combinado.html');
         document.getElementById('btnRepeatReview').addEventListener('click', () => { completionModal.style.display = 'none'; resetGame(); });
         document.getElementById('btnExitMenu').addEventListener('click', () => window.location.href = 'index.html');
         document.getElementById('resetBtn').addEventListener('click', resetGame);
-        verifyButton.addEventListener('click', startVerificationCountdown);
-        togglePracticeButton.addEventListener('click', () => {
-            togglePracticeMode().catch(error => {
-                console.error(error);
-                scanStatusElement.textContent = '⚠️ No se pudo cambiar de actividad.';
-            });
-        });
-
-        async function togglePracticeMode() {
-            if (togglePracticeButton.disabled) return;
-            togglePracticeButton.disabled = true;
-            try {
-                if (!isPracticeMode) {
-                    await stopCamera();
-                    isPracticeMode = true;
-                    wasScanActiveBeforePractice = scanActive;
-                    scanActive = false;
-                    if (player) player.pauseVideo();
-                    verifyButton.disabled = true;
-                    completionModal.style.display = 'none';
-                    mainElement.style.display = 'none';
-                    footerElement.style.display = 'none';
-                    headerInfo.style.display = 'none';
-                    homeHeaderButton.style.display = 'none';
-                    practiceModeElement.style.display = 'block';
-                    togglePracticeButton.textContent = '🔤 Volver al repaso';
-                    practiceFrame.src = 'ejercicios_practicos_letras_manos_combinado.html';
-                    return;
-                }
-
-                practiceFrame.removeAttribute('src');
-                practiceModeElement.style.display = 'none';
-                mainElement.style.display = '';
-                footerElement.style.display = '';
-                headerInfo.style.display = '';
-                homeHeaderButton.style.display = '';
-                togglePracticeButton.textContent = '✏️ Ejercicios prácticos';
-                isPracticeMode = false;
-                await initAI();
-                scanActive = wasScanActiveBeforePractice;
-                verifyButton.disabled = !scanActive || !isCameraReady;
-                if (scanActive) scanStatusElement.textContent = 'Muestra la tarjeta y pulsa «Verificar letra».';
-            } finally {
-                togglePracticeButton.disabled = false;
-            }
-        }
-
-        async function stopCamera() {
-            isCameraReady = false;
-            if (webcam) {
-                webcam.stream.getTracks().forEach(track => track.stop());
-                webcam = null;
-            }
-            if (handDetector) {
-                await handDetector.close();
-                handDetector = null;
-            }
-        }
 
         // API YouTube
         function onYouTubeIframeAPIReady() {
@@ -769,13 +697,13 @@
                         instructionBox.style.display = 'inline-block';
                         expectedLetterText.textContent = checkpoint.letter;
                         updateCurrentLetter(checkpoint.letter);
-                        verifyButton.disabled = false;
 
                         hideFeedback();
-                        scanStatusElement.textContent = "Muestra la tarjeta y pulsa «Verificar letra».";
+                        scanStatusElement.textContent = 'Muestra la tarjeta. La verificación comenzará automáticamente.';
                         speak(`Muestra la letra ${checkpoint.letter}`);
                         lastCheckpointNotified = currentCheckpoint;
                         scanActive = true;
+                        startVerificationCountdown();
                     }
                 }
                 requestAnimationFrame(checkTime);
@@ -785,10 +713,13 @@
         function handleCorrectMatch() {
             isProcessingMatch = true;
             scanActive = false;
-            verifyButton.disabled = true;
             if (countdownTimer) {
                 clearInterval(countdownTimer);
                 countdownTimer = null;
+            }
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+                retryTimer = null;
             }
 
             const letter = checkpoints[currentCheckpoint].letter;
@@ -820,10 +751,13 @@
         function resetGame() {
             scanActive = false;
             isProcessingMatch = false;
-            verifyButton.disabled = true;
             if (countdownTimer) {
                 clearInterval(countdownTimer);
                 countdownTimer = null;
+            }
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+                retryTimer = null;
             }
             score = 0;
             currentCheckpoint = 0;
@@ -903,17 +837,22 @@
         }
 
         function startVerificationCountdown() {
-            if (!model || !webcam || !isCameraReady || !scanActive || isProcessingMatch || countdownTimer) return;
+            if (!scanActive || isProcessingMatch || countdownTimer || retryTimer) return;
 
-            verifyButton.disabled = true;
+            if (!model || !webcam || !isCameraReady) {
+                scanStatusElement.textContent = 'Esperando a que la cámara y el modelo estén listos...';
+                scheduleVerificationRetry(1000);
+                return;
+            }
+
             let count = 3;
-            scanStatusElement.textContent = `Retira la mano y prepara la tarjeta. Verificando en ${count}...`;
+            scanStatusElement.textContent = `Retira la mano y prepara la tarjeta. Verificación automática en ${count}...`;
             speak('Retira la mano. Tres');
 
             countdownTimer = setInterval(() => {
                 count--;
                 if (count > 0) {
-                    scanStatusElement.textContent = `Retira la mano. Verificando en ${count}...`;
+                    scanStatusElement.textContent = `Retira la mano. Verificación automática en ${count}...`;
                     speak(String(count));
                     return;
                 }
@@ -965,8 +904,16 @@
                 scanStatusElement.textContent = '⚠️ No se pudo analizar la imagen.';
                 showFeedback('Ocurrió un error al verificar la letra.', 'feedback-warning');
             } finally {
-                if (scanActive && !isProcessingMatch) verifyButton.disabled = false;
+                if (scanActive && !isProcessingMatch) scheduleVerificationRetry(1000);
             }
+        }
+
+        function scheduleVerificationRetry(delay) {
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+                retryTimer = null;
+                startVerificationCountdown();
+            }, delay);
         }
 
         async function handDetectedRecently() {
@@ -1034,10 +981,7 @@
             }
         }
 
-        window.addEventListener('DOMContentLoaded', async () => {
-            await initAI();
-            togglePracticeButton.disabled = false;
-        });
+        window.addEventListener('DOMContentLoaded', initAI);
     </script>
 </body>
 </html>
